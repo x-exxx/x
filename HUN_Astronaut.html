@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Astronaut - 8-Bit Space Game</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        #gameCanvas {
+            background-color: black;
+            cursor: pointer;
+            image-rendering: pixelated;
+        }
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // Astronaut properties
+        let astronaut = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            size: 80,
+            isMoving: false,
+            rotation: 0
+        };
+
+        // 8-bit style stars
+        const stars = [];
+        for (let i = 0; i < 50; i++) {  // Increased number of stars for more variety
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.floor(Math.random() * 5) + 1,  // 1 to 5 pixels
+                speed: Math.random() * 0.5 + 0.1,
+                brightness: Math.random() * 0.5 + 0.5  // Vary star brightness
+            });
+        }
+
+        // Draw Astronaut (8-bit style)
+        function drawAstronaut() {
+            ctx.save();
+            ctx.translate(astronaut.x, astronaut.y);
+            ctx.rotate(astronaut.rotation);
+
+            // Body - Hungarian flag (3 equal stripes)
+            // Red stripe (upper)
+            ctx.fillStyle = '#FF0000';
+            ctx.fillRect(-10, -5, 20, 6.5);
+            
+            // White stripe (middle)
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(-10, 1.5, 20, 6.5);
+            
+            // Green stripe (bottom)
+            ctx.fillStyle = '#00FF00';
+            ctx.fillRect(-10, 8, 20, 6.5);
+
+            // Helmet
+            ctx.fillStyle = 'white';
+            ctx.fillRect(-15, -25, 30, 20);
+            ctx.fillStyle = '#808080';
+            ctx.fillRect(-10, -20, 20, 10);
+
+            // Arms
+            ctx.fillStyle = 'white';
+            ctx.fillRect(-25, -10, 10, 10);
+            ctx.fillRect(15, -10, 10, 10);
+
+            // Legs
+            ctx.fillStyle = 'white';
+            ctx.fillRect(-15, 15, 8, 10);
+            ctx.fillRect(7, 15, 8, 10);
+
+            ctx.restore();
+        }
+
+        // Move Astronaut
+        function moveAstronaut() {
+            if (!astronaut.isMoving) {
+                astronaut.isMoving = true;
+                const targetX = Math.random() * (canvas.width - 100) + 50;
+                const targetY = Math.random() * (canvas.height - 100) + 50;
+
+                const moveInterval = setInterval(() => {
+                    const dx = targetX - astronaut.x;
+                    const dy = targetY - astronaut.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance > 5) {
+                        astronaut.x += dx * 0.05;
+                        astronaut.y += dy * 0.05;
+                        astronaut.rotation += 0.1;
+                    } else {
+                        clearInterval(moveInterval);
+                        astronaut.isMoving = false;
+                        astronaut.rotation = 0;
+                    }
+                }, 20);
+            }
+        }
+
+        // Update stars
+        function updateStars() {
+            stars.forEach(star => {
+                star.x += star.speed;
+                if (star.x > canvas.width) {
+                    star.x = 0;
+                    star.y = Math.random() * canvas.height;
+                }
+            });
+        }
+
+        // Draw 8-bit style stars
+        function drawStars() {
+            stars.forEach(star => {
+                ctx.fillStyle = `rgba(255, 255, 255, ${star.brightness})`;
+                ctx.fillRect(Math.floor(star.x), Math.floor(star.y), star.size, star.size);
+            });
+        }
+
+        // Game loop
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            updateStars();
+            drawStars();
+            drawAstronaut();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start game
+        gameLoop();
+
+        // Click event
+        canvas.addEventListener('click', moveAstronaut);
+    </script>
+</body>
+</html>
