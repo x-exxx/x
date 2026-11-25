@@ -1,0 +1,691 @@
+
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saját sakk</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+<style>
+* {box-sizing:border-box}
+
+body {
+  margin:0;
+  padding:18px 10px 30px;
+  background:#090909;
+  color:#eee;
+  font-family:Arial,sans-serif;
+  text-align:center;
+}
+
+#levels {
+  display:flex;
+  justify-content:center;
+  gap:6px;
+  margin:0 auto 15px;
+  max-width:560px;
+}
+
+.level {
+  flex:1;
+  max-width:55px;
+  padding:11px 0;
+  border:1px solid #555;
+  border-radius:5px;
+  background:#292929;
+  color:#ddd;
+  font-weight:bold;
+  font-size:16px;
+  cursor:pointer;
+}
+
+.level.active {
+  background:#98734b;
+  color:white;
+  border-color:#d8b47a;
+  box-shadow:0 0 8px #98734b;
+}
+
+.level:disabled {opacity:.5}
+
+#board {
+  width:min(92vw,560px);
+  aspect-ratio:1;
+  margin:0 auto;
+  display:grid;
+  grid-template-columns:repeat(8,1fr);
+  grid-template-rows:repeat(8,1fr);
+  border:4px solid #39302a;
+  box-shadow:0 8px 28px #000;
+  user-select:none;
+  touch-action:manipulation;
+}
+
+.square {
+  position:relative;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  min-width:0;
+  min-height:0;
+}
+
+.light {background:#f0d9b5}
+.dark {background:#b58863}
+
+.square img {
+  width:94%;
+  height:94%;
+  object-fit:contain;
+  pointer-events:none;
+  z-index:2;
+}
+
+.square.selected {background:#baca44!important}
+.square.last {background:#cdd26a!important}
+
+.square.target::after {
+  content:"";
+  position:absolute;
+  width:27%;
+  height:27%;
+  border-radius:50%;
+  background:#526b36;
+  opacity:.65;
+}
+
+.square.capture::after {
+  content:"";
+  position:absolute;
+  inset:3px;
+  border:5px solid #526b36;
+  border-radius:50%;
+  opacity:.65;
+}
+
+.coord {
+  position:absolute;
+  font-size:10px;
+  font-weight:bold;
+  z-index:3;
+  pointer-events:none;
+}
+
+.coord.file {right:3px;bottom:1px}
+.coord.rank {left:3px;top:1px}
+
+.light .coord {color:#b58863}
+.dark .coord {color:#f0d9b5}
+
+#status {
+  margin:17px auto 14px;
+  max-width:560px;
+  min-height:25px;
+  font-size:16px;
+  font-weight:bold;
+  color:#eee;
+}
+
+#buttons {
+  display:flex;
+  justify-content:center;
+  gap:12px;
+  max-width:560px;
+  margin:0 auto;
+}
+
+.action {
+  flex:1;
+  padding:14px 10px;
+  border:0;
+  border-radius:6px;
+  font-size:15px;
+  font-weight:bold;
+  cursor:pointer;
+  color:white;
+}
+
+#resign {background:#414141}
+#newGame {background:#414141}
+
+#promotion {
+  display:none;
+  position:fixed;
+  inset:0;
+  background:#000b;
+  z-index:10;
+  align-items:center;
+  justify-content:center;
+}
+
+#promotionBox {
+  background:#252525;
+  border:1px solid #98734b;
+  padding:22px;
+  border-radius:10px;
+}
+
+#promotionBox h3 {margin-top:0}
+
+.promoButton {
+  width:62px;
+  height:62px;
+  margin:4px;
+  background:#444;
+  border:1px solid #777;
+  border-radius:6px;
+  cursor:pointer;
+}
+
+.promoButton img {
+  width:100%;
+  height:100%;
+}
+
+@media(max-width:380px) {
+  body {padding:10px 6px}
+  .level {padding:10px 0}
+}
+</style>
+</head>
+
+<body>
+
+<div id="levels">
+  <button class="level active" data-level="1">1</button>
+  <button class="level" data-level="2">2</button>
+  <button class="level" data-level="3">3</button>
+  <button class="level" data-level="4">4</button>
+  <button class="level" data-level="5">5</button>
+  <button class="level" data-level="6">6</button>
+  <button class="level" data-level="7">7</button>
+  <button class="level" data-level="8">8</button>
+</div>
+
+<div id="board"></div>
+
+<div id="status">Sakkmotor betöltése...</div>
+
+<div id="buttons">
+  <button class="action" id="resign">Feladás</button>
+  <button class="action" id="newGame">Új játék</button>
+</div>
+
+<div id="promotion">
+  <div id="promotionBox">
+    <h3>Válassz figurát!</h3>
+    <div id="promotionChoices"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+const board = document.getElementById("board");
+const statusBox = document.getElementById("status");
+const promotion = document.getElementById("promotion");
+const promotionChoices = document.getElementById("promotionChoices");
+
+if (typeof Chess !== "function") {
+  statusBox.textContent =
+    "A sakk szabálymotor nem tölthető be. Ellenőrizd az internetkapcsolatot.";
+  return;
+}
+
+const game = new Chess();
+
+const pieceURL =
+  "https://lichess1.org/assets/piece/cburnett/";
+
+// STOCKFISH 10.0.2 - JAVASCRIPT VÁLTOZAT
+// Nem használ külön WASM-fájlt.
+const engineURL =
+  "https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js";
+
+let engine = null;
+let engineBlobURL = null;
+let engineReady = false;
+let thinking = false;
+let gameEnded = false;
+let selected = null;
+let possibleMoves = [];
+let lastMove = null;
+let pendingPromotion = null;
+let level = 1;
+let gameNumber = 0;
+let searchGameNumber = -1;
+let engineTimeout = null;
+
+const skillLevels = [0,3,6,9,12,15,18,20];
+const thinkingTimes = [120,200,350,550,850,1300,2000,3000];
+
+function render() {
+  for (const el of board.children) {
+    const square = el.dataset.square;
+    const piece = game.get(square);
+
+    el.querySelectorAll("img").forEach(img => img.remove());
+    el.classList.remove("selected","target","capture","last");
+
+    if (piece) {
+      const img = document.createElement("img");
+      img.src = pieceURL + piece.color +
+        piece.type.toUpperCase() + ".svg";
+      img.alt = piece.type;
+      img.draggable = false;
+      el.appendChild(img);
+    }
+
+    if (square === selected) {
+      el.classList.add("selected");
+    }
+
+    if (possibleMoves.includes(square)) {
+      el.classList.add(piece ? "capture" : "target");
+    }
+
+    if (lastMove &&
+       (square === lastMove.from || square === lastMove.to)) {
+      el.classList.add("last");
+    }
+  }
+}
+
+function createBoard() {
+  board.innerHTML = "";
+
+  for (let rank=8;rank>=1;rank--) {
+    for (let f=0;f<8;f++) {
+      const square = "abcdefgh"[f]+rank;
+      const el = document.createElement("div");
+
+      el.className = "square " +
+        ((rank+f)%2===0 ? "light":"dark");
+
+      el.dataset.square = square;
+
+      if (f===0) {
+        const c=document.createElement("span");
+        c.className="coord rank";
+        c.textContent=rank;
+        el.appendChild(c);
+      }
+
+      if (rank===1) {
+        const c=document.createElement("span");
+        c.className="coord file";
+        c.textContent="abcdefgh"[f];
+        el.appendChild(c);
+      }
+
+      el.addEventListener("click",()=>squareClick(square));
+      board.appendChild(el);
+    }
+  }
+
+  render();
+}
+
+function squareClick(square) {
+  if (gameEnded || thinking || !engineReady ||
+      game.turn()!=="w" || pendingPromotion) return;
+
+  const piece=game.get(square);
+
+  if (selected && possibleMoves.includes(square)) {
+    makeHumanMove(selected,square);
+    return;
+  }
+
+  if (piece && piece.color==="w") {
+    selected=square;
+
+    possibleMoves=game.moves({
+      square:square,
+      verbose:true
+    }).map(m=>m.to);
+  } else {
+    selected=null;
+    possibleMoves=[];
+  }
+
+  render();
+}
+
+function makeHumanMove(from,to) {
+  const moves=game.moves({square:from,verbose:true});
+  const options=moves.filter(m=>m.to===to);
+
+  if (options.some(m=>m.flags.includes("p"))) {
+    pendingPromotion={from,to};
+    showPromotion();
+    return;
+  }
+
+  const result=game.move({from,to});
+  if (!result) return;
+
+  lastMove={from,to};
+  selected=null;
+  possibleMoves=[];
+
+  afterMove();
+}
+
+function showPromotion() {
+  promotionChoices.innerHTML="";
+
+  ["q","r","b","n"].forEach(type=>{
+    const btn=document.createElement("button");
+    btn.className="promoButton";
+
+    const img=document.createElement("img");
+    img.src=pieceURL+"w"+type.toUpperCase()+".svg";
+    btn.appendChild(img);
+
+    btn.onclick=()=>{
+      const p=pendingPromotion;
+      if (!p) return;
+
+      const result=game.move({
+        from:p.from,
+        to:p.to,
+        promotion:type
+      });
+
+      pendingPromotion=null;
+      promotion.style.display="none";
+
+      if(result) {
+        lastMove={from:p.from,to:p.to};
+        selected=null;
+        possibleMoves=[];
+        afterMove();
+      }
+    };
+
+    promotionChoices.appendChild(btn);
+  });
+
+  promotion.style.display="flex";
+}
+
+function afterMove() {
+  render();
+  updateStatus();
+
+  if (!gameEnded && game.turn()==="b") {
+    computerMove();
+  }
+}
+
+function updateStatus() {
+  if (game.in_checkmate()) {
+    gameEnded=true;
+
+    statusBox.textContent =
+      game.turn()==="w" ?
+      "Matt! A számítógép nyert." :
+      "Matt! Te nyertél!";
+
+    return;
+  }
+
+  if (game.in_stalemate()) {
+    gameEnded=true;
+    statusBox.textContent="Patt! Döntetlen.";
+    return;
+  }
+
+  if (game.in_draw()) {
+    gameEnded=true;
+    statusBox.textContent="Döntetlen!";
+    return;
+  }
+
+  if (game.turn()==="w") {
+    statusBox.textContent=game.in_check() ?
+      "Sakk! Te következel." :
+      "Te következel – Fehér.";
+  } else {
+    statusBox.textContent=game.in_check() ?
+      "A gép sakkban van!" :
+      "A számítógép gondolkodik...";
+  }
+}
+
+function send(command) {
+  if (engine) {
+    engine.postMessage(command);
+  }
+}
+
+function setLevel(n) {
+  level=n;
+
+  document.querySelectorAll(".level").forEach(btn=>{
+    btn.classList.toggle(
+      "active",
+      Number(btn.dataset.level)===n
+    );
+  });
+
+  if(engineReady) {
+    send(
+      "setoption name Skill Level value "+
+      skillLevels[n-1]
+    );
+  }
+}
+
+// MOTOR BETÖLTÉSE
+// Blob Worker + importScripts.
+// Így nem kell közvetlenül külső Worker URL-t
+// megnyitni, és a program egyetlen HTML marad.
+
+function initEngine() {
+  try {
+
+    if (!window.Worker || !window.Blob ||
+        !window.URL || !URL.createObjectURL) {
+      throw new Error(
+        "A böngésző nem támogatja a szükséges Worker funkciókat."
+      );
+    }
+
+    const workerCode =
+      'importScripts("' + engineURL + '");';
+
+    const blob = new Blob(
+      [workerCode],
+      {type:"application/javascript"}
+    );
+
+    engineBlobURL = URL.createObjectURL(blob);
+
+    engine = new Worker(engineBlobURL);
+
+    engineTimeout = setTimeout(()=>{
+      if (!engineReady) {
+        statusBox.textContent =
+          "A sakkmotor betöltése túl sokáig tartott. Ellenőrizd az internetkapcsolatot.";
+      }
+    },30000);
+
+    engine.onmessage=(event)=>{
+      const message=String(event.data);
+
+      if (message.includes("uciok")) {
+        send(
+          "setoption name Skill Level value "+
+          skillLevels[level-1]
+        );
+
+        send("isready");
+      }
+
+      if (message.includes("readyok")) {
+        engineReady=true;
+
+        if (engineTimeout) {
+          clearTimeout(engineTimeout);
+          engineTimeout=null;
+        }
+
+        statusBox.textContent="Te következel – Fehér.";
+      }
+
+      if (message.startsWith("bestmove")) {
+        thinking=false;
+
+        // Régi játékból érkező motorlépés figyelmen kívül hagyása.
+        if (gameEnded ||
+            searchGameNumber !== gameNumber ||
+            game.turn() !== "b") return;
+
+        const match=message.match(
+          /bestmove\s+([a-h][1-8][a-h][1-8][qrbn]?)/
+        );
+
+        if(!match) {
+          updateStatus();
+          return;
+        }
+
+        const uci=match[1];
+
+        const result=game.move({
+          from:uci.substring(0,2),
+          to:uci.substring(2,4),
+          promotion:uci.length===5 ? uci[4] : "q"
+        });
+
+        if(result) {
+          lastMove={
+            from:result.from,
+            to:result.to
+          };
+
+          render();
+          updateStatus();
+        }
+      }
+    };
+
+    engine.onerror=(event)=>{
+      engineReady=false;
+      thinking=false;
+
+      if (engineTimeout) {
+        clearTimeout(engineTimeout);
+        engineTimeout=null;
+      }
+
+      statusBox.textContent=
+        "Sakkmotor betöltési hiba. Ellenőrizd az internetkapcsolatot és a böngésző beállításait.";
+
+      console.error("Stockfish hiba:",event.message || event);
+    };
+
+    engine.onmessageerror=()=>{
+      statusBox.textContent=
+        "Hiba érkezett a sakkmotortól.";
+    };
+
+    send("uci");
+
+  } catch(error) {
+    statusBox.textContent=
+      "Motorindítási hiba: "+error.message;
+
+    console.error(error);
+  }
+}
+
+// SZÁMÍTÓGÉP LÉPÉSE
+
+function computerMove() {
+  if(!engineReady || thinking || gameEnded ||
+     game.turn()!=="b") return;
+
+  thinking=true;
+  searchGameNumber=gameNumber;
+
+  statusBox.textContent=
+    "A számítógép gondolkodik...";
+
+  send(
+    "setoption name Skill Level value "+
+    skillLevels[level-1]
+  );
+
+  send("position fen "+game.fen());
+
+  send("go movetime "+thinkingTimes[level-1]);
+}
+
+// NEHÉZSÉGI SZINTEK
+
+document.querySelectorAll(".level").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    if(thinking || gameEnded) return;
+
+    setLevel(Number(btn.dataset.level));
+  });
+});
+
+// ÚJ JÁTÉK
+
+document.getElementById("newGame").addEventListener("click",()=>{
+  gameNumber++;
+
+  game.reset();
+
+  gameEnded=false;
+  thinking=false;
+  selected=null;
+  possibleMoves=[];
+  pendingPromotion=null;
+  lastMove=null;
+
+  promotion.style.display="none";
+
+  if(engine) {
+    send("stop");
+  }
+
+  render();
+  updateStatus();
+});
+
+// FELADÁS
+
+document.getElementById("resign").addEventListener("click",()=>{
+  if(gameEnded) return;
+
+  gameEnded=true;
+  thinking=false;
+
+  if(engine) {
+    send("stop");
+  }
+
+  statusBox.textContent=
+    "Feladtad a partit. A számítógép nyert!";
+});
+
+// INDÍTÁS
+
+setLevel(1);
+createBoard();
+initEngine();
+
+})();
+</script>
+
+</body>
+</html>
