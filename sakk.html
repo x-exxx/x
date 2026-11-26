@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Saját sakk</title>
+<title>sakk</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 
@@ -42,7 +42,7 @@ body {
 }
 
 .level.active {
-  background:#98734b;
+  background:#414141;
   color:white;
   border-color:#d8b47a;
   box-shadow:0 0 8px #98734b;
@@ -76,10 +76,18 @@ body {
 .light {background:#f0d9b5}
 .dark {background:#b58863}
 
-.square img {
+.square img.piece-image {
   width:94%;
   height:94%;
   object-fit:contain;
+  pointer-events:none;
+  z-index:2;
+}
+
+.piece-fallback {
+  font-family:"Arial Unicode MS",Arial,sans-serif;
+  font-size:clamp(24px,8vw,49px);
+  line-height:1;
   pointer-events:none;
   z-index:2;
 }
@@ -183,6 +191,7 @@ body {
 .promoButton img {
   width:100%;
   height:100%;
+  object-fit:contain;
 }
 
 @media(max-width:380px) {
@@ -241,8 +250,6 @@ const game = new Chess();
 const pieceURL =
   "https://lichess1.org/assets/piece/cburnett/";
 
-// STOCKFISH 10.0.2 - JAVASCRIPT VÁLTOZAT
-// Nem használ külön WASM-fájlt.
 const engineURL =
   "https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js";
 
@@ -251,33 +258,83 @@ let engineBlobURL = null;
 let engineReady = false;
 let thinking = false;
 let gameEnded = false;
+
 let selected = null;
 let possibleMoves = [];
 let lastMove = null;
 let pendingPromotion = null;
+
 let level = 1;
 let gameNumber = 0;
 let searchGameNumber = -1;
+
 let engineTimeout = null;
+
+// Ha stop után érkezik a régi bestmove,
+// azt nem szabad az új játék lépéseként kezelni.
+let stopPending = false;
 
 const skillLevels = [0,3,6,9,12,15,18,20];
 const thinkingTimes = [120,200,350,550,850,1300,2000,3000];
+
+const fallbackPieces = {
+  w: {
+    k:"♔", q:"♕", r:"♖",
+    b:"♗", n:"♘", p:"♙"
+  },
+  b: {
+    k:"♚", q:"♛", r:"♜",
+    b:"♝", n:"♞", p:"♟"
+  }
+};
+
+// FIGURÁK MEGJELENÍTÉSE
+
+function addPiece(squareElement, piece) {
+  const img = document.createElement("img");
+
+  img.className = "piece-image";
+  img.src = pieceURL + piece.color +
+    piece.type.toUpperCase() + ".svg";
+
+  img.alt = piece.type;
+  img.draggable = false;
+
+  img.onerror = () => {
+    if (!img.isConnected) return;
+
+    img.remove();
+
+    const fallback = document.createElement("span");
+    fallback.className = "piece-fallback";
+    fallback.textContent =
+      fallbackPieces[piece.color][piece.type];
+
+    fallback.setAttribute("aria-label",piece.type);
+
+    squareElement.appendChild(fallback);
+  };
+
+  squareElement.appendChild(img);
+}
+
+// TÁBLA RAJZOLÁSA
 
 function render() {
   for (const el of board.children) {
     const square = el.dataset.square;
     const piece = game.get(square);
 
-    el.querySelectorAll("img").forEach(img => img.remove());
-    el.classList.remove("selected","target","capture","last");
+    el.querySelectorAll(
+      ".piece-image,.piece-fallback"
+    ).forEach(item => item.remove());
+
+    el.classList.remove(
+      "selected","target","capture","last"
+    );
 
     if (piece) {
-      const img = document.createElement("img");
-      img.src = pieceURL + piece.color +
-        piece.type.toUpperCase() + ".svg";
-      img.alt = piece.type;
-      img.draggable = false;
-      el.appendChild(img);
+      addPiece(el,piece);
     }
 
     if (square === selected) {
@@ -285,11 +342,14 @@ function render() {
     }
 
     if (possibleMoves.includes(square)) {
-      el.classList.add(piece ? "capture" : "target");
+      el.classList.add(
+        piece ? "capture" : "target"
+      );
     }
 
     if (lastMove &&
-       (square === lastMove.from || square === lastMove.to)) {
+       (square === lastMove.from ||
+        square === lastMove.to)) {
       el.classList.add("last");
     }
   }
@@ -322,13 +382,18 @@ function createBoard() {
         el.appendChild(c);
       }
 
-      el.addEventListener("click",()=>squareClick(square));
+      el.addEventListener(
+        "click",()=>squareClick(square)
+      );
+
       board.appendChild(el);
     }
   }
 
   render();
 }
+
+// MEZŐ KIVÁLASZTÁSA
 
 function squareClick(square) {
   if (gameEnded || thinking || !engineReady ||
@@ -356,8 +421,14 @@ function squareClick(square) {
   render();
 }
 
+// EMBERI LÉPÉS
+
 function makeHumanMove(from,to) {
-  const moves=game.moves({square:from,verbose:true});
+  const moves=game.moves({
+    square:from,
+    verbose:true
+  });
+
   const options=moves.filter(m=>m.to===to);
 
   if (options.some(m=>m.flags.includes("p"))) {
@@ -376,20 +447,38 @@ function makeHumanMove(from,to) {
   afterMove();
 }
 
+// GYALOGÁTVÁLTOZTATÁS
+
+function closePromotion() {
+  pendingPromotion=null;
+  promotion.style.display="none";
+  promotionChoices.innerHTML="";
+}
+
 function showPromotion() {
   promotionChoices.innerHTML="";
 
   ["q","r","b","n"].forEach(type=>{
     const btn=document.createElement("button");
     btn.className="promoButton";
+    btn.type="button";
 
     const img=document.createElement("img");
     img.src=pieceURL+"w"+type.toUpperCase()+".svg";
+    img.alt=type;
+
+    img.onerror=()=>{
+      img.remove();
+      btn.textContent=fallbackPieces.w[type];
+      btn.style.color="#fff";
+      btn.style.fontSize="38px";
+    };
+
     btn.appendChild(img);
 
     btn.onclick=()=>{
       const p=pendingPromotion;
-      if (!p) return;
+      if (!p || gameEnded) return;
 
       const result=game.move({
         from:p.from,
@@ -397,8 +486,7 @@ function showPromotion() {
         promotion:type
       });
 
-      pendingPromotion=null;
-      promotion.style.display="none";
+      closePromotion();
 
       if(result) {
         lastMove={from:p.from,to:p.to};
@@ -414,6 +502,8 @@ function showPromotion() {
   promotion.style.display="flex";
 }
 
+// LÉPÉS UTÁNI ELLENŐRZÉS
+
 function afterMove() {
   render();
   updateStatus();
@@ -422,6 +512,8 @@ function afterMove() {
     computerMove();
   }
 }
+
+// JÁTÉKÁLLAPOT
 
 function updateStatus() {
   if (game.in_checkmate()) {
@@ -458,6 +550,8 @@ function updateStatus() {
   }
 }
 
+// MOTORPARANCSOK
+
 function send(command) {
   if (engine) {
     engine.postMessage(command);
@@ -482,10 +576,18 @@ function setLevel(n) {
   }
 }
 
+// MOTOR LEÁLLÍTÁSA
+
+function stopEngineSearch() {
+  if (thinking && engine) {
+    stopPending=true;
+    send("stop");
+  } else {
+    thinking=false;
+  }
+}
+
 // MOTOR BETÖLTÉSE
-// Blob Worker + importScripts.
-// Így nem kell közvetlenül külső Worker URL-t
-// megnyitni, és a program egyetlen HTML marad.
 
 function initEngine() {
   try {
@@ -509,13 +611,6 @@ function initEngine() {
 
     engine = new Worker(engineBlobURL);
 
-    engineTimeout = setTimeout(()=>{
-      if (!engineReady) {
-        statusBox.textContent =
-          "A sakkmotor betöltése túl sokáig tartott. Ellenőrizd az internetkapcsolatot.";
-      }
-    },30000);
-
     engine.onmessage=(event)=>{
       const message=String(event.data);
 
@@ -536,13 +631,31 @@ function initEngine() {
           engineTimeout=null;
         }
 
-        statusBox.textContent="Te következel – Fehér.";
+        statusBox.textContent=
+          "Te következel – Fehér.";
       }
 
       if (message.startsWith("bestmove")) {
+
+        // A régi keresés befejeződött.
+        // Ezt a lépést eldobhatjuk, nem alkalmazzuk.
+        if (stopPending) {
+          stopPending=false;
+          thinking=false;
+
+          // Ha közben már fekete következik,
+          // az aktuális játékban elindítjuk a keresést.
+          if (!gameEnded && game.turn()==="b") {
+            computerMove();
+          } else if (!gameEnded) {
+            updateStatus();
+          }
+
+          return;
+        }
+
         thinking=false;
 
-        // Régi játékból érkező motorlépés figyelmen kívül hagyása.
         if (gameEnded ||
             searchGameNumber !== gameNumber ||
             game.turn() !== "b") return;
@@ -579,6 +692,7 @@ function initEngine() {
     engine.onerror=(event)=>{
       engineReady=false;
       thinking=false;
+      stopPending=false;
 
       if (engineTimeout) {
         clearTimeout(engineTimeout);
@@ -588,13 +702,23 @@ function initEngine() {
       statusBox.textContent=
         "Sakkmotor betöltési hiba. Ellenőrizd az internetkapcsolatot és a böngésző beállításait.";
 
-      console.error("Stockfish hiba:",event.message || event);
+      console.error(
+        "Stockfish hiba:",
+        event.message || event
+      );
     };
 
     engine.onmessageerror=()=>{
       statusBox.textContent=
         "Hiba érkezett a sakkmotortól.";
     };
+
+    engineTimeout=setTimeout(()=>{
+      if (!engineReady) {
+        statusBox.textContent=
+          "A sakkmotor betöltése túl sokáig tartott. Ellenőrizd az internetkapcsolatot.";
+      }
+    },30000);
 
     send("uci");
 
@@ -609,8 +733,8 @@ function initEngine() {
 // SZÁMÍTÓGÉP LÉPÉSE
 
 function computerMove() {
-  if(!engineReady || thinking || gameEnded ||
-     game.turn()!=="b") return;
+  if(!engineReady || thinking || stopPending ||
+     gameEnded || game.turn()!=="b") return;
 
   thinking=true;
   searchGameNumber=gameNumber;
@@ -632,7 +756,7 @@ function computerMove() {
 
 document.querySelectorAll(".level").forEach(btn=>{
   btn.addEventListener("click",()=>{
-    if(thinking || gameEnded) return;
+    if(thinking || stopPending || gameEnded) return;
 
     setLevel(Number(btn.dataset.level));
   });
@@ -643,20 +767,16 @@ document.querySelectorAll(".level").forEach(btn=>{
 document.getElementById("newGame").addEventListener("click",()=>{
   gameNumber++;
 
+  stopEngineSearch();
+
   game.reset();
 
   gameEnded=false;
-  thinking=false;
   selected=null;
   possibleMoves=[];
-  pendingPromotion=null;
   lastMove=null;
 
-  promotion.style.display="none";
-
-  if(engine) {
-    send("stop");
-  }
+  closePromotion();
 
   render();
   updateStatus();
@@ -668,11 +788,15 @@ document.getElementById("resign").addEventListener("click",()=>{
   if(gameEnded) return;
 
   gameEnded=true;
-  thinking=false;
 
-  if(engine) {
-    send("stop");
-  }
+  closePromotion();
+
+  selected=null;
+  possibleMoves=[];
+
+  stopEngineSearch();
+
+  render();
 
   statusBox.textContent=
     "Feladtad a partit. A számítógép nyert!";
